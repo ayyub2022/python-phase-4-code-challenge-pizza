@@ -1,64 +1,83 @@
-import pytest
-from app import app
-from models import db, Restaurant, Pizza, RestaurantPizza
-from faker import Faker
+
+from flask_sqlalchemy import SQLAlchemy
+from sqlalchemy import MetaData
+from sqlalchemy.orm import validates
+from sqlalchemy.ext.associationproxy import association_proxy
+from sqlalchemy_serializer import SerializerMixin
+
+metadata = MetaData(
+    naming_convention={
+        "fk": "fk_%(table_name)s_%(column_0_name)s_%(referred_table_name)s",
+    }
+)
+
+db = SQLAlchemy(metadata=metadata)
 
 
-class TestRestaurantPizza:
-    '''Class RestaurantPizza in models.py'''
+class Restaurant(db.Model, SerializerMixin):
+    __tablename__ = "restaurants"
 
-    def test_price_between_1_and_30(self):
-        '''requires price between 1 and 30.'''
+    id = db.Column(db.Integer, primary_key=True)
+    name = db.Column(db.String)
+    address = db.Column(db.String)
 
-        with app.app_context():
+    # add relationship. First arg in parens is the class name to which you are relating. Second arg is back_populates which points to the relationship attribute in the other class to which you are relating (seems to be lowercase name of the current class...). Third arg is cascading delete if applicable.
+    #cascading delete here is such that when a Restaurant is deleted, all of its restaurant_pizzas are also deleted.
+    restaurant_pizzas = db.relationship(
+        'RestaurantPizza', 
+        back_populates='restaurant', 
+        cascade ='all, delete-orphan'
+    )
 
-            pizza = Pizza(
-                name=Faker().name(), ingredients="Dough, Sauce, Cheese")
-            restaurant = Restaurant(name=Faker().name(), address='Main St')
-            db.session.add(pizza)
-            db.session.add(restaurant)
-            db.session.commit()
+    # add serialization rules
+    # pattern of note - items inside of the list below are relationshipattribute.back_populates.
+    serialize_rules = ['-restaurant_pizzas.restaurant']
 
-            restaurant_pizza_1 = RestaurantPizza(
-                restaurant_id=restaurant.id, pizza_id=pizza.id, price=1)
-            restaurant_pizza_2 = RestaurantPizza(
-                restaurant_id=restaurant.id, pizza_id=pizza.id, price=30)
-            db.session.add(restaurant_pizza_1)
-            db.session.add(restaurant_pizza_2)
-            db.session.commit()
+    def __repr__(self):
+        return f"<Restaurant {self.name}>"
 
-    def test_price_too_low(self):
-        '''requires price between 1 and 30 and fails when price is 0.'''
 
-        with app.app_context():
+class Pizza(db.Model, SerializerMixin):
+    __tablename__ = "pizzas"
 
-            with pytest.raises(ValueError):
-                pizza = Pizza(
-                    name=Faker().name(), ingredients="Dough, Sauce, Cheese")
-                restaurant = Restaurant(name=Faker().name(), address='Main St')
-                db.session.add(pizza)
-                db.session.add(restaurant)
-                db.session.commit()
+    id = db.Column(db.Integer, primary_key=True)
+    name = db.Column(db.String)
+    ingredients = db.Column(db.String)
 
-                restaurant_pizza = RestaurantPizza(
-                    restaurant_id=restaurant.id, pizza_id=pizza.id, price=0)
-                db.session.add(restaurant_pizza)
-                db.session.commit()
+    # add relationship
+    restaurant_pizzas = db.relationship('RestaurantPizza', back_populates='pizza')
 
-    def test_price_too_high(self):
-        '''requires price between 1 and 30 and fails when price is 31.'''
+    # add serialization rules
+    serialize_rules = ['-restaurant_pizzas.pizza']
 
-        with app.app_context():
+    def __repr__(self):
+        return f"<Pizza {self.name}, {self.ingredients}>"
 
-            with pytest.raises(ValueError):
-                pizza = Pizza(
-                    name=Faker().name(), ingredients="Dough, Sauce, Cheese")
-                restaurant = Restaurant(name=Faker().name(), address='Main St')
-                db.session.add(pizza)
-                db.session.add(restaurant)
-                db.session.commit()
 
-                restaurant_pizza = RestaurantPizza(
-                    restaurant_id=restaurant.id, pizza_id=pizza.id, price=31)
-                db.session.add(restaurant_pizza)
-                db.session.commit()
+class RestaurantPizza(db.Model, SerializerMixin):
+    __tablename__ = "restaurant_pizzas"
+
+    id = db.Column(db.Integer, primary_key=True)
+    price = db.Column(db.Integer, nullable=False)
+    pizza_id = db.Column(db.Integer, db.ForeignKey('pizzas.id')) #foreign keys are tablename.column
+    restaurant_id = db.Column(db.Integer, db.ForeignKey('restaurants.id'))
+
+    # add relationships
+    restaurant = db.relationship('Restaurant', back_populates='restaurant_pizzas')
+    pizza = db.relationship('Pizza', back_populates='restaurant_pizzas')
+
+    # add serialization rules
+    serialize_rules = ['-restaurant.restaurant_pizzas', '-pizza.restaurant_pizzas']
+
+    # add validation
+    #validates(item that is getting validated), third person. self, key, and new_value are params.
+    #validation imported above from sqlalchemy.orm
+    @validates('price')
+    def validates_price(self,key,new_price):
+        if not (1 <= new_price <= 30):
+            raise ValueError('Price must be between 1 and 30.')
+        else:
+            return new_price
+
+    def __repr__(self):
+        return f"<RestaurantPizza ${self.price}>"
